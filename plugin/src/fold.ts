@@ -34,14 +34,17 @@ const HAND_BACK_HEAD_CHARS = 3000;
 const HAND_BACK_FACT_LINES = 8;
 const LARGEST_FOLD_SHARE = 0.7;
 
-export interface StageFold {
+export interface Replacement {
   firstFoldedIndex: number;
   lastFoldedIndex: number;
   text: string;
+  roleKeepingAlternation?: Message['role'];
+}
+
+export interface StageFold extends Replacement {
   fullText: string;
   path: string;
   anchoredPrompts: QueuedPrompt[];
-  roleKeepingAlternation?: Message['role'];
   narration?: string[];
 }
 
@@ -294,6 +297,8 @@ const LISTED_INDEX_READS = 15;
 const STATE_COMMAND_CHARS = 200;
 const INDEX_MIN_FOLDED_CHARS = 2000;
 
+const fileNameOf = (path: string): string => path.slice(path.lastIndexOf('/') + 1);
+
 const isFoldEntry = (message: Message): boolean =>
   message.toolUses.length === 0 && (message.text.startsWith(INDEX_PREFIX) || message.text.startsWith(FOLD_PREFIX));
 
@@ -430,7 +435,7 @@ function indexEntryText(
   const list = (title: string, items: readonly string[]): string =>
     items.length === 0 ? '' : `${title}: ${items.join(' · ')}`;
   return [
-    `${INDEX_PREFIX} | ${calls} calls folded; their full text and outputs (${charsOf(body)} chars) saved to ${path}; @L<n> is the line there, Read it with offset n]`,
+    `${INDEX_PREFIX} | ${calls} calls folded; their full text and outputs (${charsOf(body)} chars) saved as ${fileNameOf(path)} in the offload dir; @L<n> is the line there, Read it with offset n]`,
     list('Changed (Read for the current content)', [...changed].filter(([target]) => target).map(([target, line]) => `${target}${line}`)),
     list('Ran', [...new Set(stateCommands)]),
     list('Fetched (rerun for the current state)', [...new Set(fetches)]),
@@ -446,6 +451,65 @@ function indexEntryText(
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+const INDEX_SHORT_PREFIX = `${INDEX_PREFIX}, shortened`;
+const ENTRY_SECTION = /^(Changed \(|Ran: |Fetched \(|Read: |User(?: \(queued\)| answered)?: |Hand-back: |Noted on the way:|Replied:)/;
+const ENTRY_TURN_FILE = /saved (?:to|as) (\S+\.txt)/;
+const ENTRY_CALLS = /(\d+) calls folded/;
+const ENTRY_LINE_MARK = / @L\d+$/;
+const SHORT_REPLY_CHARS = 1500;
+const SHORT_CHANGED_FILES = 20;
+const SHORT_CHANGED_SEGMENTS = 2;
+
+function shortChangedLine(line: string): string {
+  const targets = line
+    .slice(line.indexOf('): ') + 3)
+    .split(' · ')
+    .map((target) => target.replace(ENTRY_LINE_MARK, '').split('/').slice(-SHORT_CHANGED_SEGMENTS).join('/'));
+  const unique = [...new Set(targets.filter(Boolean))];
+  const more = unique.length > SHORT_CHANGED_FILES ? ` · +${unique.length - SHORT_CHANGED_FILES} more` : '';
+  return `Changed: ${unique.slice(0, SHORT_CHANGED_FILES).join(' · ')}${more}`;
+}
+
+function shortReply(lines: readonly string[]): string {
+  let head = '';
+  for (const paragraph of lines.slice(1).join('\n').trim().split(/\n\s*\n/)) {
+    if (head && head.length + paragraph.length > SHORT_REPLY_CHARS) break;
+    head += head ? `\n\n${paragraph}` : paragraph;
+  }
+  return `Replied:\n${truncate(head, SHORT_REPLY_CHARS)}`;
+}
+
+function shortIndexEntry(text: string, offloadDir: string): string | undefined {
+  const [header = '', ...body] = text.split('\n');
+  const turnFile = ENTRY_TURN_FILE.exec(header)?.[1];
+  if (header.startsWith(INDEX_SHORT_PREFIX) || !turnFile) return undefined;
+  const sections: { kind: string; lines: string[] }[] = [];
+  for (const line of body) {
+    const kind = ENTRY_SECTION.exec(line)?.[1];
+    if (kind) sections.push({ kind, lines: [line] });
+    else sections.at(-1)?.lines.push(line);
+  }
+  const pointer = turnFile.startsWith(`${offloadDir}/`) ? fileNameOf(turnFile) : turnFile;
+  const calls = ENTRY_CALLS.exec(header)?.[1];
+  const kept = sections.flatMap(({ kind, lines }) => {
+    if (kind.startsWith('Changed')) return [shortChangedLine(lines[0]!)];
+    if (kind.startsWith('Replied')) return [shortReply(lines)];
+    return /^(?:User|Hand-back|Noted)/.test(kind) ? [lines.join('\n')] : [];
+  });
+  const shortened = [`${INDEX_SHORT_PREFIX} | ${calls ? `${calls} calls folded; ` : ''}commands, outputs and the rest of the reply are in ${pointer}: Grep or Read it]`, ...kept].join('\n');
+  return shortened.length < text.length ? shortened : undefined;
+}
+
+export function shortenedIndexEntries(foldBefore: number, messages: readonly Message[], offloadDir: string | undefined): Replacement[] {
+  if (!offloadDir) return [];
+  return messages.slice(1, foldBefore).flatMap((message, offset): Replacement[] => {
+    if (message.toolUses.length > 0 || !message.text.startsWith(INDEX_PREFIX)) return [];
+    const text = shortIndexEntry(message.text, offloadDir);
+    const index = offset + 1;
+    return text === undefined ? [] : [{ firstFoldedIndex: index, lastFoldedIndex: index, text, roleKeepingAlternation: message.role }];
+  });
 }
 
 export function turnIndexFoldsBefore(
@@ -582,7 +646,7 @@ export async function pickedNarration(
   );
 }
 
-export function withFoldsApplied(messages: readonly Message[], folds: readonly StageFold[]): Message[] {
+export function withFoldsApplied(messages: readonly Message[], folds: readonly Replacement[]): Message[] {
   const foldAt = new Map(folds.map((fold) => [fold.firstFoldedIndex, fold]));
   const out: Message[] = [];
   for (let i = 0; i < messages.length; i += 1) {

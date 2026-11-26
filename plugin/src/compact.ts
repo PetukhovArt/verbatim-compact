@@ -8,7 +8,7 @@ import {
   renderTranscript,
   truncate,
 } from './state.js';
-import { closedStageFoldsBefore, INDEX_PREFIX, pickedNarration, stageDigests, turnIndexFoldsBefore, withFoldsApplied } from './fold.js';
+import { closedStageFoldsBefore, INDEX_PREFIX, pickedNarration, shortenedIndexEntries, stageDigests, turnIndexFoldsBefore, withFoldsApplied } from './fold.js';
 import { EDIT_TOOLS, repeatedTexts, sourceCuts, type Repeat, type SourceCut } from './source.js';
 import type {
   Brief,
@@ -947,14 +947,15 @@ export async function compact(
   const unfoldedPrompts = resolved.queuedPrompts.filter((prompt) => !foldedPrompts.has(prompt));
   const historyHint =
     resolved.foldStyle === 'index' && folds.length > 0 && offload
-      ? `Earlier turns are folded into "${INDEX_PREFIX}" entries: what changed, what was run and fetched, the user's words, hand-backs, decisions and replies. Every folded call with its full output is saved under ${offload.dir}. Before answering from memory about anything older than the recent calls, look it up there: Grep that dir with -n and head_limit for one distinctive term at a time (a path, symbol, id or English keyword; reports are often in English), and Grep again with another term when the first finds nothing; then Read the file with offset and limit around the hit, or at the @L<n> an entry gives, about 150 lines, never a whole turn file. Reread live files and rerun fetches for their current state.`
+      ? `Earlier turns are folded into "${INDEX_PREFIX}" entries: what changed, what was run and fetched, the user's words, hand-backs, decisions and replies. Entries that survived an earlier compaction keep only the user's words, hand-backs, notes, changed files and the start of the reply. Every folded call with its full output is saved under ${offload.dir}, in the turn file each entry names (turn-<id>.txt). Before answering from memory about anything older than the recent calls, look it up there: Grep that dir with -n and head_limit for one distinctive term at a time (a path, symbol, id or English keyword; reports are often in English), and Grep again with another term when the first finds nothing; then Read the file with offset and limit around the hit, or at the @L<n> an entry gives, about 150 lines, never a whole turn file. Reread live files and rerun fetches for their current state.`
       : '';
   const notes = notesText(messages, edits, kept, { ...resolved, queuedPrompts: unfoldedPrompts }, offload, historyHint);
   const inserted = [briefText, notes]
     .filter(Boolean)
     .map((text): Message => ({ role: 'user', text, toolUses: [] }));
   kept.splice(insertAt, 0, ...inserted);
-  const output = withFoldsApplied(kept, folds);
+  const shortened = resolved.foldStyle === 'index' && resolved.foldStages ? shortenedIndexEntries(foldBefore, messages, offload?.dir) : [];
+  const output = withFoldsApplied(kept, [...folds, ...shortened]);
   return {
     messages: output,
     decisions,
