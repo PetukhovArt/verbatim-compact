@@ -67,7 +67,6 @@ jobs:
 
       - name: Plugin tests
         working-directory: plugin
-        env:
         run: claude plugin test
 
       - name: Extract release notes from CHANGELOG.md
