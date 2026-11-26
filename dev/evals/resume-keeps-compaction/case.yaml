@@ -1,0 +1,13 @@
+schema_version: "1.1"
+name: resume-keeps-compaction
+description: A subagent compacted mid-task and then resumed by SendMessage must see its compacted history, not the original one.
+tags: [resume, subagent]
+plugins: ["../../../plugin"]
+runs: 3
+expected_outcome: The resumed subagent still knows each file's first-line word, and the tail lines of the early, cut reads are gone from its context.
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 40
+  timeout_seconds: 1200
+  allowed_tools: [Read, Glob, Grep, Agent, SendMessage]

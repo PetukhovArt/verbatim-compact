@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  # A version bump landing on main is the release: this workflow tests it, tags it,
+  # writes the GitHub release and moves the `live` branch to it. A tag pushed with
+  # GITHUB_TOKEN starts no workflow, so the tag records the release, it does not start it.
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.decide.outputs.version }}
+      release: ${{ steps.decide.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: decide
+        shell: bash
+        run: |
+          version="$(node -p "require('./plugin/.claude-plugin/plugin.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$GITHUB_REF" in
+            refs/tags/v*)
+              [ "$version" = "${GITHUB_REF_NAME#v}" ] ||
+                { echo "::error::tag $GITHUB_REF_NAME != plugin.json version $version"; exit 1; }
+              release=true ;;
+            refs/heads/main)
+              if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+                echo "v$version is already released - nothing to do"
+                release=false
+              else
+                echo "v$version is new - releasing"
+                release=true
+              fi ;;
+            *) release=false ;;
+          esac
+          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && { echo "dry run: test and notes only"; }
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: gate
+    if: needs.gate.outputs.release == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.gate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm install -g @anthropic-ai/claude-code
+
+      - name: Plugin tests
+        working-directory: plugin
+        env:
+          CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: '1'
+        run: claude plugin test
+
+      - name: Extract release notes from CHANGELOG.md
+        shell: bash
+        run: |
+          awk -v v="$VERSION" '
+            index($0, "## " v " ") == 1 { f = 1; next }
+            f && index($0, "## ") == 1 { exit }
+            f
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          grep -q '[^[:space:]]' RELEASE_NOTES.md ||
+            { echo "::error::CHANGELOG.md has no '## $VERSION (YYYY-MM-DD)' section"; exit 1; }
+
+      - name: Tag this version
+        if: github.event_name != 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/v$VERSION" \
+            -f sha="$GITHUB_SHA"
+
+      - uses: softprops/action-gh-release@v2
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          tag_name: v${{ needs.gate.outputs.version }}
+          name: v${{ needs.gate.outputs.version }}
+          body_path: RELEASE_NOTES.md
+
+      # force=false: the API refuses a move that is not a fast-forward.
+      - name: Move live to this release
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/live" \
+            -f sha="$GITHUB_SHA" -F force=false

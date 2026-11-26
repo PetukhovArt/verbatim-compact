@@ -1,0 +1,47 @@
+{
+  "name": "claude-compact",
+  "version": "0.1.0",
+  "description": "Verbatim compaction for Claude Code sessions, with a Claude model scoring which tool calls to keep.",
+  "license": "MIT",
+  "userConfig": {
+    "preserveRecentMessages": {
+      "type": "number",
+      "title": "Recent messages to preserve",
+      "description": "Number of newest messages pinned from compaction.",
+      "default": 6
+    },
+    "keepImages": {
+      "type": "number",
+      "title": "Kept image results",
+      "description": "The newest this many image results (a Read of an image file) outside the preserved messages stay; an older one becomes a one-line marker naming its file and size. A message holding a kept image is left whole. -1 keeps every image.",
+      "default": 3
+    },
+    "minReductionRatio": {
+      "type": "number",
+      "title": "Minimum reduction ratio",
+      "description": "Minimum estimated character reduction for a manual /compact to replace history; below it /compact falls back to the built-in summary. Any other trigger installs the result anyway.",
+      "default": 0.25
+    },
+    "strategy": {
+      "type": "string",
+      "title": "Strategy",
+      "description": "tiers: calls are cut by age and, with scoring on, by the model's verdict; source: only calls whose content can be read or rerun again (file reads, searches, read-only commands, edit inputs) or that a later call superseded are cut, with no scoring.",
+      "options": [
+        "tiers",
+        "source"
+      ],
+      "default": "tiers"
+    },
+    "scoring": {
+      "type": "string",
+      "title": "Scoring",
+      "description": "none: every call outside the preserved messages is cut by the rules alone; blind: a model also scores calls from the history without outputs; content: from each call's input and output head. A model costs requests on every compaction.",
+      "options": [
+        "blind",
+        "content",
+        "none"
+      ],
+      "default": "none"
+    }
+  }
+}

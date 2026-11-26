@@ -1,0 +1,13 @@
+{
+  "name": "claude-compact",
+  "owner": { "name": "Artem Petukhov", "url": "https://github.com/PetukhovArt" },
+  "description": "Verbatim compaction for Claude Code sessions.",
+  "plugins": [
+    {
+      "name": "claude-compact",
+      "source": "./plugin",
+      "description": "Verbatim compaction for Claude Code sessions: tool calls are cut and saved to disk instead of the history being retold.",
+      "category": "productivity"
+    }
+  ]
+}

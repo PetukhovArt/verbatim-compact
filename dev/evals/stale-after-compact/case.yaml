@@ -1,0 +1,13 @@
+schema_version: "1.1"
+name: stale-after-compact
+description: Files the session read change behind its back (a subagent edits them), then the session compacts; work after the compaction must use the current files, not the snapshot it read before.
+tags: [freshness]
+plugins: ["../../../plugin"]
+runs: 3
+expected_outcome: invoice.ts calls price with a currency and reads the returned amount; the final line names tax 0.2 and release 2026-12-05.
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 40
+  timeout_seconds: 1200
+  allowed_tools: [Read, Glob, Grep, Write, Edit, Agent]
