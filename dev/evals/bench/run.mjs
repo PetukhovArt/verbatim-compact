@@ -18,7 +18,7 @@
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ask, isolatedEnv } from './claude.mjs';
 import { CONFIGS, DEFAULT_MODELS } from './configs.mjs';
@@ -37,7 +37,7 @@ const flag = (name, fallback) => {
 const BENCH = flag('bench', join(dirname(fileURLToPath(import.meta.url)), '../out/bench'));
 const session = flag('session');
 const cells = flag('configs', 'current').split(',');
-const out = flag('out', join(BENCH, 'runs'));
+const out = resolve(flag('out', join(BENCH, 'runs')));
 const modelOverride = flag('model');
 const parallel = Number(flag('parallel', 1));
 const budget = Number(flag('budget', Infinity));
@@ -140,12 +140,20 @@ async function runNative(config, dir, rec) {
   const reply = await new Promise((resolve) => {
     const child = spawn('claude', argv, { cwd: dir, env: isolatedEnv(), shell: false });
     let text = '';
+    let stderr = '';
     child.stdout.on('data', (d) => (text += d));
-    child.on('close', () => resolve(text));
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('close', (code) => resolve(text || `exit ${code}: ${stderr}`));
     child.stdin.end();
   });
-  const json = JSON.parse(reply);
-  rec.requests.push({ stage: 'native', durationApiMs: json.duration_api_ms ?? 0, costUsd: json.total_cost_usd ?? 0 });
+  let json;
+  try {
+    json = JSON.parse(reply);
+  } catch {
+    throw new Error(`native: ${reply.slice(0, 1500)}`);
+  }
+  const inherited = lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).findLast((r) => r?.type === 'cost-state')?.totalCostUSD ?? 0;
+  rec.requests.push({ stage: 'native', durationApiMs: json.duration_api_ms ?? 0, costUsd: Math.max(0, (json.total_cost_usd ?? 0) - inherited) });
   const projects = join(homedir(), '.claude', 'projects');
   const file = readdirSync(projects).map((p) => join(projects, p, `${json.session_id}.jsonl`)).find(existsSync);
   if (!file) throw new Error(`native: no session file for ${json.session_id}: ${reply.slice(0, 300)}`);
@@ -159,7 +167,7 @@ async function runNative(config, dir, rec) {
     cut_line: records.length,
     preserved_lines: preservedLines(records, records[boundary].compactMetadata?.preservedSegment),
   });
-  return { ...rebuilt, metrics: { requests: 1, criticalApiMs: json.duration_api_ms } };
+  return { ...rebuilt, answerDirs: [dirname(file)], metrics: { requests: 1, criticalApiMs: json.duration_api_ms } };
 }
 
 const renderContext = (input, output, attachments) => renderWith(input, output, attachments, renderTranscript);
@@ -169,18 +177,21 @@ function jsonOf(text) {
   return JSON.parse(text.slice(start, text.lastIndexOf('}') + 1));
 }
 
-async function quality(rendered, dir) {
+async function quality(rendered, dir, tools, dirs, tag) {
   const { questions } = probes;
+  const cwd = join(dir, `answer-cwd${tag}`);
+  mkdirSync(cwd, { recursive: true });
   const answer = await ask({
     ...ANSWER,
-    system: answerTools
-      ? `You answer questions about a coding-assistant conversation, as the assistant would when it resumes: from the conversation and the files it names, which you open with ${answerTools}. Parts of the conversation were cut and saved: a "[claude-compact" marker or notes message names the saved copy (a path, or a directory plus the call's tool_use_id). When the conversation does not hold an answer, open the saved copies and files that the topic points to before answering. Answer "unknown" only when they do not hold it either. Never guess.`
+    system: tools
+      ? `You answer questions about a coding-assistant conversation, as the assistant would when it resumes: from the conversation and the files it names, which you open with ${tools}. Parts of the conversation were cut and saved: a "[claude-compact" marker or notes message names the saved copy (a path, or a directory plus the call's tool_use_id). When the conversation does not hold an answer, open the saved copies and files that the topic points to before answering. Answer "unknown" only when they do not hold it either. Never guess.`
       : 'You answer questions about a coding-assistant conversation from that conversation alone. When it does not contain the answer, answer "unknown". Never guess.',
-    tools: answerTools,
-    addDirs: [...addDirs, dir],
+    tools,
+    addDirs: [...addDirs, ...dirs],
+    cwd,
     prompt: `<conversation>\n${rendered}\n</conversation>\n\nAnswer every question below. Reply with only a JSON object mapping each question id to its answer.\n${questions.map((q) => `${q.id}: ${q.q}`).join('\n')}`,
   });
-  if (answerTools) writeFileSync(join(dir, 'answer-tools.json'), JSON.stringify(answer.toolCalls, null, 2));
+  if (tools) writeFileSync(join(dir, `answer-tools${tag}.json`), JSON.stringify(answer.toolCalls, null, 2));
   if (answer.isError) throw new Error(`answer: ${answer.text.slice(0, 300)}`);
   const answers = jsonOf(answer.text);
   const items = questions.map((q) => ({ id: q.id, question: q.q, reference: q.answer, exact: q.exact, answer: String(answers[q.id] ?? 'unknown') }));
@@ -202,7 +213,7 @@ async function quality(rendered, dir) {
       identifier: mean(graded.filter((g) => byId.get(g.id).category === 'identifier')),
       confidentWrong: graded.filter((g) => g.confident_wrong).length,
       costUsd: answer.costUsd + grade.costUsd,
-      ...(answerTools && { toolCalls: answer.toolCalls.length, rereadChars: answer.toolCalls.reduce((sum, call) => sum + call.returnedChars, 0), answerUsage: answer.usage }),
+      ...(tools && { toolCalls: answer.toolCalls.length, rereadChars: answer.toolCalls.reduce((sum, call) => sum + call.returnedChars, 0), answerUsage: answer.usage }),
       answerApiMs: answer.durationApiMs,
     },
   };
@@ -217,16 +228,13 @@ let spent = existsSync(resultsFile)
   : 0;
 
 /** One attempt of a cell; its spend is added to `rec` even when it throws. */
-async function attempt(cell, dir, rec) {
+async function attempt(cell, dir, rec, index) {
   const config = cellConfig(cell);
-  if (config.baseline === 'native' && !args.includes('--allow-native')) {
-    throw new Error('native reported $32 and $138 for one /compact on two sessions (2026-11-20), likely the resumed session\'s cost counter, unverified: pass --allow-native to run it');
-  }
   const started = Date.now();
   const run =
     config.baseline === 'full' ? { ...before, metrics: { requests: 0, criticalApiMs: 0 } }
     : config.baseline === 'native' ? await runNative(config, dir, rec)
-    : { ...(await runPlugin(config, before.messages, before.attachments, dir, rec)), attachments: before.attachments };
+    : { ...(await runPlugin(config, before.messages, before.attachments, dir, rec)), attachments: before.attachments, answerDirs: [join(dir, 'offload')] };
   const wallMs = Date.now() - started;
   // native came from its own transcript: all of it is as the engine left it
   const context = config.baseline === 'native'
@@ -236,7 +244,7 @@ async function attempt(cell, dir, rec) {
   const charsBefore = sumChars(before.messages);
   const charsAfter = sumChars(run.messages);
   const row = {
-    session, cell, options: config.options ?? null, window: [probes.window_from_line, probes.cut_line],
+    session, cell, index, dir, options: config.options ?? null, window: [probes.window_from_line, probes.cut_line],
     messagesBefore: before.messages.length, messagesAfter: run.messages.length,
     queuedPrompts: `${context.promptsKept}/${before.attachments.length}`,
     charsBefore, charsAfter, ratio: reductionRatio({ stats: { charsBefore, charsAfter } }),
@@ -244,22 +252,28 @@ async function attempt(cell, dir, rec) {
     wallMs, costUsd: rec.cost(), ...run.metrics,
   };
   if (!args.includes('--no-quality') && probes.questions?.length) {
-    const q = await quality(context.text, dir);
+    const dirs = run.answerDirs ?? [];
+    const q = await quality(context.text, dir, answerTools, dirs, '');
     writeFileSync(join(dir, 'quality.json'), JSON.stringify(q.graded, null, 2));
     row.quality = q.metrics;
+    if (answerTools && args.includes('--paired')) {
+      const plain = await quality(context.text, dir, '', dirs, '-notools');
+      writeFileSync(join(dir, 'quality-notools.json'), JSON.stringify(plain.graded, null, 2));
+      row.qualityNoTools = plain.metrics;
+    }
   }
   return row;
 }
 
-async function runCell(cell) {
+async function runCell(cell, index) {
   let failures = [];
   let cost = 0;
   for (let tryNo = 1; tryNo <= 2; tryNo++) {
-    const dir = join(out, session ?? 'probe', `${cell.replace(/[@:]/g, '_')}-${stamp}${tryNo > 1 ? '-retry' : ''}`);
+    const dir = join(out, session ?? 'probe', `${cell.replace(/[@:]/g, '_')}-${stamp}-${index}${tryNo > 1 ? '-retry' : ''}`);
     mkdirSync(dir, { recursive: true });
     const rec = recorder();
     try {
-      const row = await attempt(cell, dir, rec);
+      const row = await attempt(cell, dir, rec, index);
       row.totalCostUsd = cost + row.costUsd + (row.quality?.costUsd ?? 0);
       row.failedAttempts = failures;
       return row;
@@ -269,10 +283,10 @@ async function runCell(cell) {
       console.error(`${cell} attempt ${tryNo} failed: ${failures.at(-1)}`);
     }
   }
-  return { session, cell, failed: true, failedAttempts: failures, totalCostUsd: cost };
+  return { session, cell, index, failed: true, failedAttempts: failures, totalCostUsd: cost };
 }
 
-const queue = [...cells];
+const queue = Array.from({ length: Number(flag('repeat', 1)) }, (_, i) => cells.map((cell) => [cell, i])).flat();
 await Promise.all(
   Array.from({ length: Math.max(1, parallel) }, async () => {
     while (queue.length > 0) {
@@ -280,8 +294,8 @@ await Promise.all(
         console.error(`budget $${budget} reached ($${spent.toFixed(2)}); skipped: ${queue.splice(0).join(', ')}`);
         return;
       }
-      const cell = queue.shift();
-      const row = await runCell(cell);
+      const [cell, index] = queue.shift();
+      const row = await runCell(cell, index);
       spent += row.totalCostUsd ?? 0;
       appendFileSync(resultsFile, `${JSON.stringify(row)}\n`);
       console.log(JSON.stringify(row));

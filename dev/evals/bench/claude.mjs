@@ -17,7 +17,7 @@ export function isolatedEnv() {
  * `tools` (e.g. `Read,Grep`) are allowed without a prompt, `addDirs` widen where they reach;
  * `toolCalls` lists each call as `{ tool, input, isError }`.
  */
-export function ask({ model, prompt, system = MINIMAL_SYSTEM, effort, tools = '', addDirs = [] }) {
+export function ask({ model, prompt, system = MINIMAL_SYSTEM, effort, tools = '', addDirs = [], cwd }) {
   const argv = [
     '-p',
     '--model', model,
@@ -33,7 +33,7 @@ export function ask({ model, prompt, system = MINIMAL_SYSTEM, effort, tools = ''
   ];
   const started = Date.now();
   return new Promise((resolve) => {
-    const child = spawn('claude', argv, { env: isolatedEnv(), shell: false });
+    const child = spawn('claude', argv, { env: isolatedEnv(), shell: false, cwd });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => (out += d));
