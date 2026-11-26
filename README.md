@@ -11,6 +11,8 @@ Old turns are folded into an index and saved to disk, so the agent keeps the rea
 [![Release](https://img.shields.io/github/v/release/PetukhovArt/claude-compact?color=7aa2e0)](https://github.com/PetukhovArt/claude-compact/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-66c29a)](LICENSE)
 
+<sub>Needs Claude Code <b>2.1.287 or later</b>: the plugin is a <a href="https://code.claude.com/docs/en/plugins/mods/overview">mod</a>, which is on by default from that version. Older versions need <code>CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1</code>, the early-access switch for mods.</sub>
+
 </div>
 
 ## Why claude-compact
@@ -44,7 +46,9 @@ flowchart TD
     /plugin marketplace add PetukhovArt/claude-compact
     /plugin install claude-compact@claude-compact
 
-The plugin uses function hooks: start Claude Code with `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`. Then `/compact` and auto-compaction go through the plugin. `/compact native` still gives the built-in summary.
+Nothing else to set: `/compact` and auto-compaction now go through the plugin, and `/compact native` still gives the built-in summary. `/plugin` shows "1 mod active" when it is loaded.
+
+Works in the CLI, the JetBrains plugin, the Desktop Code tab (not in WSL or SSH sessions) and the VS Code extension. Like every mod, it runs inside Claude Code with your permissions: read [`plugin/hooks/claude-compact.ts`](plugin/hooks/claude-compact.ts) before you install it. `disableAllHooks` or the managed setting `allowManagedModsOnly` turn it off.
 
 <details><summary><b>Options</b></summary>
 

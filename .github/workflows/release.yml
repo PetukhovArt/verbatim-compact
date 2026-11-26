@@ -68,7 +68,6 @@ jobs:
       - name: Plugin tests
         working-directory: plugin
         env:
-          CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: '1'
         run: claude plugin test
 
       - name: Extract release notes from CHANGELOG.md
