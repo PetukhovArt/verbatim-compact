@@ -2,7 +2,7 @@
 
 A bench window is the part of a real session a compaction replaces. The bench compacts it with a plugin config, gives the compacted context to a model and asks it the probes. A probe is a question whose answer the session had in the window and needed again after the cut. Its score says whether the compacted context kept what the work needed.
 
-Input, in `<dir>`:
+Input, in `<dir>`, cut by `node bench/cut-window.mjs <session.jsonl> <name> [--nth N]` (the window ends at the session's nth compaction):
 - `window.txt`: the window, one block per jsonl record, headed `=== L<line> · <role> · <kind> ===`.
 - `after.txt`: the session after the cut, up to its next compaction.
 - `window.json`: the session file and the line range.
