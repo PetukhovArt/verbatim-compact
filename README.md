@@ -2,22 +2,22 @@
 
 <img src="assets/logo.svg" width="72" alt="" />
 
-# claude-compact
+# verbatim-compact
 
 **Verbatim compaction for Claude Code sessions.**<br/>
 Old turns are folded into an index and saved to disk, so the agent keeps the real history instead of a summary of it.
 
-[![CI](https://github.com/PetukhovArt/claude-compact/actions/workflows/ci.yml/badge.svg)](https://github.com/PetukhovArt/claude-compact/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/PetukhovArt/claude-compact?color=7aa2e0)](https://github.com/PetukhovArt/claude-compact/releases)
+[![CI](https://github.com/PetukhovArt/verbatim-compact/actions/workflows/ci.yml/badge.svg)](https://github.com/PetukhovArt/verbatim-compact/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/PetukhovArt/verbatim-compact?color=7aa2e0)](https://github.com/PetukhovArt/verbatim-compact/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-66c29a)](LICENSE)
 
 <sub>Needs Claude Code <b>2.1.287 or later</b>: the plugin is a <a href="https://code.claude.com/docs/en/plugins/mods/overview">mod</a>, which is on by default from that version. Older versions need <code>CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1</code>, the early-access switch for mods.</sub>
 
 </div>
 
-## Why claude-compact
+## Why verbatim-compact
 
-- **No retold history.** The built-in `/compact` replaces the conversation with a model's summary. claude-compact keeps the newest calls as they are and folds each older turn into an index entry: your words, changed files, commands, decisions and hand-backs.
+- **No retold history.** The built-in `/compact` replaces the conversation with a model's summary. verbatim-compact keeps the newest calls as they are and folds each older turn into an index entry: your words, changed files, commands, decisions and hand-backs.
 - **Nothing is lost.** The full text of every folded turn is saved in the session folder, and the index entry points at its lines, so the agent reads back only the part it needs.
 - **No summary model by default.** Folding runs on rules; a small model only picks which narration sentences stay.
 
@@ -43,8 +43,8 @@ flowchart TD
 
 ## Quick start
 
-    /plugin marketplace add PetukhovArt/claude-compact
-    /plugin install claude-compact@claude-compact
+    /plugin marketplace add PetukhovArt/verbatim-compact
+    /plugin install verbatim-compact@verbatim-compact
 
 Nothing else to set: `/compact` and auto-compaction now go through the plugin, and `/compact native` still gives the built-in summary. `/plugin` shows "1 mod active" when it is loaded.
 
@@ -52,7 +52,7 @@ Works in the CLI, the JetBrains plugin, the Desktop Code tab (not in WSL or SSH 
 
 <details><summary><b>Options</b></summary>
 
-Set them in `/plugin` → claude-compact → configure.
+Set them in `/plugin` → verbatim-compact → configure.
 
 | Option | Default | What it does |
 |---|---|---|

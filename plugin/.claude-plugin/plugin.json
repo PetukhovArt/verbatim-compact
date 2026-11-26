@@ -1,5 +1,5 @@
 {
-  "name": "claude-compact",
+  "name": "verbatim-compact",
   "version": "0.1.0",
   "description": "Verbatim compaction for Claude Code sessions, with a Claude model scoring which tool calls to keep.",
   "license": "MIT",
